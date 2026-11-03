@@ -1,5 +1,7 @@
 package it.cime.app.core
 
+import java.util.stream.Collectors
+import java.util.stream.IntStream
 import kotlin.math.max
 import kotlin.math.min
 
@@ -30,7 +32,7 @@ class ViewResult(
  */
 class Viewshed(
     private val dem: Dem,
-    private val maxDistanceM: Double = 100_000.0,
+    private val maxDistanceM: Double = 150_000.0,
     private val eyeHeightM: Double = 1.7,
     /** Tolleranza: il DEM a ~90 m smussa creste e cime, quindi concediamo un margine. */
     private val toleranceDeg: Double = 0.08,
@@ -43,41 +45,42 @@ class Viewshed(
             !ground.isNaN() -> ground + eyeHeightM
             else -> return null
         }
-        val result = ArrayList<VisiblePeak>()
-        for (p in peaks) {
+        // Ogni cima e ogni direzione dell'orizzonte sono indipendenti: si usano tutti i core.
+        // Le letture del DEM sono assolute (nessuno stato condiviso), quindi sicure tra thread.
+        val result: List<VisiblePeak> = peaks.parallelStream().map { p ->
             val d = Geo.distance(lat, lon, p.lat, p.lon)
-            if (d < 200 || d > maxDistanceM) continue
+            if (d < 200 || d > maxDistanceM) return@map null
             val az = Geo.bearing(lat, lon, p.lat, p.lon)
             val peakAngle = Geo.elevationAngle(eye, p.ele, d)
-            val terrainMax = maxTerrainAngle(lat, lon, p.lat, p.lon, d, eye)
-            val visible = peakAngle >= terrainMax - Math.toRadians(toleranceDeg)
-            result += VisiblePeak(p, d, az, Math.toDegrees(peakAngle), visible)
-        }
+            val visible = !isBlocked(lat, lon, p.lat, p.lon, d, eye, peakAngle + Math.toRadians(toleranceDeg))
+            VisiblePeak(p, d, az, Math.toDegrees(peakAngle), visible)
+        }.filter { it != null }.map { it!! }.collect(Collectors.toList())
         val n = (360.0 / skylineStepDeg).toInt()
-        val sky = FloatArray(n) { i -> Math.toDegrees(horizonAngle(lat, lon, i * skylineStepDeg, eye)).toFloat() }
+        val sky = FloatArray(n)
+        IntStream.range(0, n).parallel().forEach { i ->
+            sky[i] = Math.toDegrees(horizonAngle(lat, lon, i * skylineStepDeg, eye)).toFloat()
+        }
         return ViewResult(lat, lon, eye, result, sky, skylineStepDeg)
     }
 
     /**
-     * Massimo angolo di elevazione del terreno lungo il segmento osservatore → cima,
-     * escludendo gli ultimi metri vicino alla cima stessa.
+     * true se lungo il segmento osservatore → cima il terreno supera l'angolo [limit]
+     * (escludendo gli ultimi metri vicino alla cima stessa). Si ferma al primo ostacolo.
+     * Il passo cresce con la distanza: a 100 km un campione ogni ~200 m sottende ancora
+     * solo 0,1°, sotto la precisione della bussola.
      */
-    private fun maxTerrainAngle(lat0: Double, lon0: Double, lat1: Double, lon1: Double, d: Double, eye: Double): Double {
+    private fun isBlocked(lat0: Double, lon0: Double, lat1: Double, lon1: Double, d: Double, eye: Double, limit: Double): Boolean {
         val path = GreatCircle(lat0, lon0, lat1, lon1)
-        val step = max(dem.cellMeters * 0.75, 25.0)
+        val base = max(dem.cellMeters * 0.75, 25.0)
         val end = d - max(250.0, dem.cellMeters * 2)
-        var best = Double.NEGATIVE_INFINITY
         var s = 50.0
         while (s < end) {
             path.at(s / d)
             val h = dem.elevationAt(path.lat, path.lon)
-            if (!h.isNaN()) {
-                val a = Geo.elevationAngle(eye, h, s)
-                if (a > best) best = a
-            }
-            s += step
+            if (!h.isNaN() && Geo.elevationAngle(eye, h, s) > limit) return true
+            s += max(base, min(s * 0.002, 200.0))
         }
-        return best
+        return false
     }
 
     /** Elevazione dell'orizzonte in una direzione: il passo cresce con la distanza per contenere i calcoli. */

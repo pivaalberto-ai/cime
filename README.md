@@ -8,7 +8,7 @@ più la linea dell'orizzonte calcolata dal modello del terreno. Funziona complet
 1. **Pacchetto regione** (`.pkpack`): un file con il terreno (Copernicus DEM, ricampionato a ~90 m)
    e le cime con nome di OpenStreetMap. Si genera sul PC con `tools/build_pack.py` e si importa nell'app.
 2. **Dove sei**: GPS → quota dell'occhio = terreno + 1,7 m (più affidabile della quota GPS).
-3. **Cosa si vede**: per ogni cima entro 100 km si percorre la linea di vista sul DEM, tenendo conto di
+3. **Cosa si vede**: per ogni cima entro 150 km si percorre la linea di vista sul DEM, tenendo conto di
    curvatura terrestre e rifrazione. Se un rilievo intermedio sta più in alto della cima, è nascosta.
    Si calcola anche il profilo dell'orizzonte (linea gialla), utile per verificare l'allineamento.
 4. **Dove guardi**: sensore *rotation vector* + declinazione magnetica (`GeomagneticField`) →
