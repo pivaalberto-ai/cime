@@ -1,0 +1,81 @@
+name: Crea pacchetto regione
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "Nome della regione (es. Lombardia)"
+        required: true
+        default: "Lombardia"
+      bbox:
+        description: "Riquadro sud,ovest,nord,est in gradi decimali"
+        required: true
+        default: "45.4,8.5,46.7,11.0"
+      step:
+        description: "Dettaglio del terreno in secondi d'arco: 2 ≈ 60 m, 3 ≈ 90 m (consigliato), 6 ≈ 180 m"
+        required: true
+        default: "3"
+      margin_km:
+        description: "Terreno extra attorno al riquadro (km), per le cime lontane"
+        required: true
+        default: "60"
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+
+      - name: Installa le dipendenze
+        run: pip install -r tools/requirements.txt
+
+      # I tile del terreno già scaricati vengono riusati nelle esecuzioni successive.
+      - uses: actions/cache@v4
+        with:
+          path: tools/dem_cache
+          key: dem-${{ github.run_id }}
+          restore-keys: dem-
+
+      - name: Nome del file
+        id: slug
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          slug=$(python3 -c "import os,re,unicodedata; s=unicodedata.normalize('NFKD', os.environ['NAME']).encode('ascii','ignore').decode().lower(); print(re.sub(r'[^a-z0-9]+','-',s).strip('-') or 'regione')")
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Genera il pacchetto
+        working-directory: tools
+        env:
+          NAME: ${{ inputs.name }}
+          BBOX: ${{ inputs.bbox }}
+          STEP: ${{ inputs.step }}
+          MARGIN: ${{ inputs.margin_km }}
+        run: |
+          python build_pack.py --bbox "$BBOX" --name "$NAME" --step "$STEP" --margin-km "$MARGIN" \
+            --out "../${{ steps.slug.outputs.slug }}.pkpack" | tee ../log.txt
+
+      - name: Pubblica tra le Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: pack-${{ steps.slug.outputs.slug }}
+          NAME: ${{ inputs.name }}
+          BBOX: ${{ inputs.bbox }}
+        run: |
+          notes=$(printf 'Pacchetto regione per Cime: %s\nRiquadro: %s\n\n```\n%s\n```\n\nScaricalo sul telefono e importalo da ⋮ → Importa pacchetto regione.\n\nDati: © OpenStreetMap contributors (ODbL); Copernicus DEM © DLR e.V. 2010-2014 e © Airbus Defence and Space GmbH 2014-2018, programma Copernicus dell UE.' "$NAME" "$BBOX" "$(cat log.txt)")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$notes"
+          else
+            gh release create "$TAG" --title "Pacchetto: $NAME" --notes "$notes" --latest=false
+          fi
+          gh release upload "$TAG" "${{ steps.slug.outputs.slug }}.pkpack" --clobber

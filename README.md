@@ -33,7 +33,15 @@ app/src/main/java/it/cime/app/
 tools/build_pack.py  generatore dei pacchetti regione
 ```
 
-## Compilare l'app
+## Tutto su GitHub (senza installare nulla)
+
+- **App**: ogni push sul ramo `main` compila l'APK e lo pubblica tra le *Release* (`build-N`).
+  Dal telefono apri la pagina Releases e tocca l'APK.
+- **Pacchetti regione**: scheda *Actions* → *Crea pacchetto regione* → *Run workflow*,
+  indica nome e riquadro. Dopo qualche minuto il `.pkpack` compare tra le Release (`pack-<nome>`).
+  Rigenerando lo stesso nome, il file viene sostituito.
+
+## Compilare l'app in locale
 
 Apri la cartella `Cime` in Android Studio (Ladybug o successivo) e lascia che sincronizzi Gradle
 (scarica Gradle 8.11.1 come indicato in `gradle/wrapper/gradle-wrapper.properties`).
