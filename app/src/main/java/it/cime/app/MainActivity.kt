@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.location.Location
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
@@ -29,6 +30,9 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import it.cime.app.core.Calibration
 import it.cime.app.core.Geo
@@ -88,6 +92,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Disegna a tutto schermo su ogni versione di Android (da Android 15 è comunque obbligatorio).
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -96,6 +102,7 @@ class MainActivity : ComponentActivity() {
         status = findViewById(R.id.status)
         doneButton = findViewById(R.id.done)
         packs = PackManager(this)
+        applySystemBarInsets()
 
         previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
         overlay.calibration = loadCalibration()
@@ -135,6 +142,24 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         location.stop()
         super.onDestroy()
+    }
+
+    /**
+     * Tiene barra superiore, etichette, bussola e pulsanti fuori dalle barre di sistema e dal notch,
+     * altrimenti il menu finisce sotto l'orologio e non si riesce a toccare.
+     */
+    private fun applySystemBarInsets() {
+        val topBar = findViewById<View>(R.id.topBar)
+        val dp = resources.displayMetrics.density
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            topBar.setPadding((12 * dp).toInt() + bars.left, bars.top, bars.right, 0)
+            (doneButton.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin = (72 * dp).toInt() + bars.bottom
+            doneButton.requestLayout()
+            overlay.insetBottom = bars.bottom.toFloat()
+            topBar.post { overlay.insetTop = topBar.height.toFloat() }
+            insets
+        }
     }
 
     // --- Fotocamera ---

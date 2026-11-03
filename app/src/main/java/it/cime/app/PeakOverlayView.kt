@@ -34,6 +34,11 @@ class PeakOverlayView @JvmOverloads constructor(
     var showHidden = false
         set(value) { field = value; invalidate() }
     var calibrating = false
+    /** Spazio occupato in alto (barra di stato + barra dell'app) e in basso (barra di navigazione), in pixel. */
+    var insetTop = 56 * resources.displayMetrics.density
+        set(value) { field = value; invalidate() }
+    var insetBottom = 0f
+        set(value) { field = value; invalidate() }
     /** Chiamato quando l'utente modifica la calibrazione trascinando/pizzicando. */
     var onCalibrationChanged: ((Calibration) -> Unit)? = null
 
@@ -77,7 +82,7 @@ class PeakOverlayView @JvmOverloads constructor(
         val az = p.centerAzimuthDeg()
         val dirs = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
         val label = "${dirs[((az + 22.5) / 45).toInt() % 8]} ${az.roundToInt()}°"
-        canvas.drawText(label, width / 2f, height - 24 * dp, hudPaint)
+        canvas.drawText(label, width / 2f, height - insetBottom - 24 * dp, hudPaint)
     }
 
     private fun drawSkyline(canvas: Canvas, p: Projector, v: ViewResult) {
@@ -107,7 +112,7 @@ class PeakOverlayView @JvmOverloads constructor(
             .sortedByDescending { (vp, _, _) -> (if (vp.visible) 1e6 else 0.0) + vp.peak.ele - vp.distanceM / 50.0 }
 
         val rowH = 34 * dp
-        val top = 56 * dp
+        val top = insetTop + 8 * dp
         val maxRows = 7
         val gap = 8 * dp
         val placed = ArrayList<Placed>()
