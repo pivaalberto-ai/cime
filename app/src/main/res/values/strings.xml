@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Cime</string>
+    <string name="menu">Menu</string>
+    <string name="calibration_done">Fine calibrazione</string>
+</resources>

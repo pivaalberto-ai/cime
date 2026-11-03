@@ -1,0 +1,185 @@
+package it.cime.app
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.util.AttributeSet
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
+import android.view.View
+import it.cime.app.core.Calibration
+import it.cime.app.core.Geo
+import it.cime.app.core.Projector
+import it.cime.app.core.ViewResult
+import it.cime.app.core.VisiblePeak
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+/** Disegna orizzonte ed etichette delle cime sopra la preview della fotocamera. */
+class PeakOverlayView @JvmOverloads constructor(
+    context: Context, attrs: AttributeSet? = null,
+) : View(context, attrs) {
+
+    var view: ViewResult? = null
+        set(value) { field = value; invalidate() }
+    var rotation9: FloatArray? = null
+    var declinationDeg = 0.0
+    /** Focale della preview in pixel; null finché la fotocamera non è pronta. */
+    var focalPx: Double? = null
+    var calibration = Calibration()
+        set(value) { field = value; invalidate() }
+    var showHidden = false
+        set(value) { field = value; invalidate() }
+    var calibrating = false
+    /** Chiamato quando l'utente modifica la calibrazione trascinando/pizzicando. */
+    var onCalibrationChanged: ((Calibration) -> Unit)? = null
+
+    private val dp = resources.displayMetrics.density
+    private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(200, 255, 220, 80); strokeWidth = 2 * dp; style = Paint.Style.STROKE
+    }
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeWidth = 1.2f * dp }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 14 * dp; isFakeBoldText = true
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val infoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(230, 230, 230, 230); textSize = 11 * dp
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val hudPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 18 * dp; textAlign = Paint.Align.CENTER; isFakeBoldText = true
+        setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val tmp = FloatArray(2)
+    private val path = Path()
+
+    private var projector: Projector? = null
+
+    private class Placed(val vp: VisiblePeak, val x: Float, val y: Float, val left: Float, val right: Float, val row: Int)
+
+    override fun onDraw(canvas: Canvas) {
+        val r = rotation9 ?: return
+        val f = focalPx ?: return
+        val p = Projector(r, declinationDeg, width.toFloat(), height.toFloat(), f, calibration)
+        projector = p
+        drawHeading(canvas, p)
+        val v = view ?: return
+        drawSkyline(canvas, p, v)
+        drawPeaks(canvas, p, v)
+    }
+
+    private fun drawHeading(canvas: Canvas, p: Projector) {
+        val az = p.centerAzimuthDeg()
+        val dirs = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
+        val label = "${dirs[((az + 22.5) / 45).toInt() % 8]} ${az.roundToInt()}°"
+        canvas.drawText(label, width / 2f, height - 24 * dp, hudPaint)
+    }
+
+    private fun drawSkyline(canvas: Canvas, p: Projector, v: ViewResult) {
+        path.reset()
+        var penDown = false
+        var lastX = 0f
+        for (i in v.skyline.indices) {
+            val az = i * v.skylineStepDeg
+            if (!p.project(az, v.skyline[i].toDouble(), tmp)) { penDown = false; continue }
+            // Interrompe la linea se salta da un bordo all'altro (punti ai lati estremi).
+            if (penDown && abs(tmp[0] - lastX) < width) path.lineTo(tmp[0], tmp[1]) else path.moveTo(tmp[0], tmp[1])
+            penDown = true; lastX = tmp[0]
+        }
+        canvas.drawPath(path, skyPaint)
+    }
+
+    private fun drawPeaks(canvas: Canvas, p: Projector, v: ViewResult) {
+        val margin = 40 * dp
+        // Priorità: cime visibili, poi più alte e più vicine.
+        val candidates = v.peaks
+            .filter { it.visible || showHidden }
+            .mapNotNull { vp ->
+                if (!p.project(vp.azimuthDeg, vp.elevationDeg, tmp)) return@mapNotNull null
+                if (tmp[0] < -margin || tmp[0] > width + margin || tmp[1] < 0 || tmp[1] > height) return@mapNotNull null
+                Triple(vp, tmp[0], tmp[1])
+            }
+            .sortedByDescending { (vp, _, _) -> (if (vp.visible) 1e6 else 0.0) + vp.peak.ele - vp.distanceM / 50.0 }
+
+        val rowH = 34 * dp
+        val top = 56 * dp
+        val maxRows = 7
+        val gap = 8 * dp
+        val placed = ArrayList<Placed>()
+        for ((vp, x, y) in candidates) {
+            val w = maxOf(namePaint.measureText(vp.peak.name), infoPaint.measureText(info(vp))) + 6 * dp
+            val left = x - 3 * dp
+            val right = left + w
+            // Riga più bassa libera che stia sopra la cima.
+            var chosen = -1
+            for (row in maxRows - 1 downTo 0) {
+                val bottom = top + row * rowH + rowH
+                if (bottom > y - 12 * dp) continue
+                val clash = placed.any { it.row == row && left < it.right + gap && right + gap > it.left }
+                // Evita anche di tagliare con la propria linea etichette già piazzate nelle righe più basse.
+                val crosses = placed.any { it.row > row && x >= it.left && x <= it.right } ||
+                    placed.any { it.row < row && it.x >= left && it.x <= right }
+                if (!clash && !crosses) { chosen = row; break }
+            }
+            if (chosen < 0) continue
+            placed += Placed(vp, x, y, left, right, chosen)
+        }
+
+        for (pl in placed) {
+            val alpha = if (pl.vp.visible) 255 else 110
+            linePaint.alpha = alpha; dotPaint.alpha = alpha; namePaint.alpha = alpha; infoPaint.alpha = alpha
+            val labelTop = top + pl.row * rowH
+            canvas.drawLine(pl.x, labelTop + rowH - 2 * dp, pl.x, pl.y - 4 * dp, linePaint)
+            canvas.drawCircle(pl.x, pl.y, 3 * dp, dotPaint)
+            canvas.drawText(pl.vp.peak.name, pl.left, labelTop + 15 * dp, namePaint)
+            canvas.drawText(info(pl.vp), pl.left, labelTop + 28 * dp, infoPaint)
+        }
+    }
+
+    private fun info(vp: VisiblePeak): String {
+        val km = vp.distanceM / 1000
+        val dist = if (km < 10) String.format(Locale.ITALY, "%.1f km", km) else "${km.roundToInt()} km"
+        return "${vp.peak.ele.roundToInt()} m · $dist"
+    }
+
+    // --- Calibrazione manuale: trascina per spostare, pizzica per regolare il campo visivo ---
+
+    private var lastX = 0f
+    private var lastY = 0f
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(d: ScaleGestureDetector): Boolean {
+            val c = calibration
+            calibration = c.copy(fovScale = (c.fovScale * d.scaleFactor).coerceIn(0.6, 1.6))
+            onCalibrationChanged?.invoke(calibration)
+            return true
+        }
+    })
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!calibrating) return false
+        scaleDetector.onTouchEvent(e)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { lastX = e.x; lastY = e.y }
+            MotionEvent.ACTION_MOVE -> if (!scaleDetector.isInProgress && e.pointerCount == 1) {
+                if (lastX.isNaN()) { lastX = e.x; lastY = e.y; return true }
+                val dpp = projector?.degreesPerPixel() ?: return true
+                val c = calibration
+                calibration = c.copy(
+                    // Trascinare a destra sposta le etichette a destra.
+                    headingOffsetDeg = Geo.angleDiff(c.headingOffsetDeg - (e.x - lastX) * dpp, 0.0),
+                    pitchOffsetDeg = (c.pitchOffsetDeg + (e.y - lastY) * dpp).coerceIn(-10.0, 10.0),
+                )
+                onCalibrationChanged?.invoke(calibration)
+                lastX = e.x; lastY = e.y
+            }
+            // Dopo un pizzico il dito rimasto riparte da dove si trova, senza salti.
+            MotionEvent.ACTION_POINTER_UP -> { lastX = Float.NaN; lastY = Float.NaN }
+        }
+        return true
+    }
+}

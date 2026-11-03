@@ -1,0 +1,52 @@
+name: Compila APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Test del motore
+        run: gradle :app:testDebugUnitTest
+
+      - name: Compila l'APK
+        run: gradle :app:assembleDebug
+
+      - name: Rinomina l'APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk cime-${{ github.run_number }}.apk
+
+      - name: Allega l'APK alla build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cime-apk
+          path: cime-${{ github.run_number }}.apk
+
+      - name: Pubblica tra le Release (scaricabile dal telefono)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Cime build ${{ github.run_number }}
+          body: |
+            APK di prova compilato automaticamente dal commit ${{ github.sha }}.
+            Aprilo dal telefono e consenti l'installazione da questa origine.
+          files: cime-${{ github.run_number }}.apk
+          make_latest: true
