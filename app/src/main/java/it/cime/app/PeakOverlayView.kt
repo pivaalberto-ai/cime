@@ -81,7 +81,10 @@ class PeakOverlayView @JvmOverloads constructor(
     private fun drawHeading(canvas: Canvas, p: Projector) {
         val az = p.centerAzimuthDeg()
         val dirs = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
-        val label = "${dirs[((az + 22.5) / 45).toInt() % 8]} ${az.roundToInt()}°"
+        var label = "${dirs[((az + 22.5) / 45).toInt() % 8]} ${az.roundToInt() % 360}°"
+        // Se una calibrazione manuale sta spostando la bussola, lo si vede subito.
+        val off = calibration.headingOffsetDeg.roundToInt()
+        if (off != 0) label += "  (corr. ${if (off > 0) "+" else ""}$off°)"
         canvas.drawText(label, width / 2f, height - insetBottom - 24 * dp, hudPaint)
     }
 

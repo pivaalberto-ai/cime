@@ -51,18 +51,37 @@ class Projector(
     }
 
     /** Azimut geografico verso cui punta il centro dell'inquadratura (per la bussola a schermo). */
-    fun centerAzimuthDeg(): Double {
-        // Direzione -Z del telefono nel mondo = -(colonna 3 di R)
-        val e = -rotation[2].toDouble()
-        val n = -rotation[5].toDouble()
-        val magnetic = Math.toDegrees(Math.atan2(e, n))
-        return Geo.normalizeDeg(magnetic + declinationDeg + cal.headingOffsetDeg)
-    }
+    fun centerAzimuthDeg(): Double =
+        Geo.normalizeDeg(headingMagneticDeg(rotation) + declinationDeg + cal.headingOffsetDeg)
 
     /** Gradi per pixel al centro: serve a convertire i trascinamenti in correzioni angolari. */
     fun degreesPerPixel(): Double = Math.toDegrees(1.0 / f)
 
     companion object {
+        /**
+         * Direzione magnetica verso cui "punta" il telefono, come nelle app bussola e in Google Maps:
+         * - telefono in piedi (fotocamera verso l'orizzonte): la direzione della fotocamera;
+         * - telefono appoggiato o quasi: la direzione del lato superiore del telefono.
+         * Tra i due casi c'è una transizione graduale, così il valore non salta.
+         * (Usare sempre la fotocamera, come prima, dava valori casuali col telefono in piano:
+         * la fotocamera guarda il pavimento e la sua direzione orizzontale è solo rumore.)
+         */
+        fun headingMagneticDeg(r: FloatArray): Double {
+            // Fotocamera = -Z del telefono = -(colonna 3 di R); lato superiore = Y = colonna 2.
+            val camE = -r[2].toDouble(); val camN = -r[5].toDouble()
+            val topE = r[1].toDouble(); val topN = r[4].toDouble()
+            val camLen = Math.hypot(camE, camN)   // 1 = fotocamera orizzontale, 0 = verticale
+            val topLen = Math.hypot(topE, topN)
+            // Peso della fotocamera: pieno sotto i ~45° di inclinazione, nullo oltre i ~70°.
+            val x = ((camLen - 0.35) / (0.70 - 0.35)).coerceIn(0.0, 1.0)
+            val w = x * x * (3 - 2 * x)
+            var e = 0.0; var n = 0.0
+            if (camLen > 1e-6) { e += w * camE / camLen; n += w * camN / camLen }
+            if (topLen > 1e-6) { e += (1 - w) * topE / topLen; n += (1 - w) * topN / topLen }
+            return Geo.normalizeDeg(Math.toDegrees(Math.atan2(e, n)))
+        }
+
+
         /**
          * Focale in pixel della preview in verticale con PreviewView FILL_CENTER.
          * [sensorLongMm]/[sensorShortMm]: dimensioni fisiche del sensore (orizzontale nativo);

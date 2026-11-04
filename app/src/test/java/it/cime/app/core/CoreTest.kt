@@ -180,6 +180,57 @@ class ProjectorTest {
         assertEquals(Math.toDegrees(1 / 1800.0), c.degreesPerPixel(), 1e-12)
     }
 
+    /** Matrice da assi del telefono espressi nel mondo (est, nord, alto): colonne X, Y, Z. */
+    private fun matrix(x: DoubleArray, y: DoubleArray, z: DoubleArray) = floatArrayOf(
+        x[0].toFloat(), y[0].toFloat(), z[0].toFloat(),
+        x[1].toFloat(), y[1].toFloat(), z[1].toFloat(),
+        x[2].toFloat(), y[2].toFloat(), z[2].toFloat(),
+    )
+
+    /** Telefono rivolto verso [az] (lato superiore / fotocamera), inclinato di [pitch] e ruotato di [roll]. */
+    private fun pose(az: Double, pitchDeg: Double, rollDeg: Double): FloatArray {
+        val a = Math.toRadians(az); val p = Math.toRadians(pitchDeg); val r = Math.toRadians(rollDeg)
+        val fwd = doubleArrayOf(Math.sin(a), Math.cos(a), 0.0)
+        val right = doubleArrayOf(Math.cos(a), -Math.sin(a), 0.0)
+        val up = doubleArrayOf(0.0, 0.0, 1.0)
+        fun lin(u: DoubleArray, cu: Double, v: DoubleArray, cv: Double) = DoubleArray(3) { u[it] * cu + v[it] * cv }
+        // pitch 0 = appoggiato a schermo in su (Y avanti, Z alto); pitch 90 = in piedi (Y alto, Z indietro).
+        val y0 = lin(fwd, Math.cos(p), up, Math.sin(p))
+        val z0 = lin(up, Math.cos(p), fwd, -Math.sin(p))
+        // roll attorno all'asse Y del telefono
+        val x = lin(right, Math.cos(r), z0, -Math.sin(r))
+        val z = lin(right, Math.sin(r), z0, Math.cos(r))
+        return matrix(x, y0, z)
+    }
+
+    @Test fun headingUprightAndFlat() {
+        for (az in listOf(0.0, 90.0, 180.0, 270.0, 33.0)) {
+            for (pitch in 0..90 step 5) {
+                val h = Projector.headingMagneticDeg(pose(az, pitch.toDouble(), 0.0))
+                assertEquals("az $az pitch $pitch", 0.0, Geo.angleDiff(h, az), 0.01)
+            }
+        }
+    }
+
+    @Test fun headingFlatWithSmallRoll() {
+        // Il caso segnalato: telefono quasi in piano verso Sud con una leggera inclinazione laterale.
+        // Prima risultava "E 90°", ora deve restare Sud.
+        for (roll in listOf(-10.0, -3.0, 3.0, 10.0)) {
+            for (pitch in listOf(0.0, 5.0, 15.0)) {
+                val h = Projector.headingMagneticDeg(pose(180.0, pitch, roll))
+                assertEquals("roll $roll pitch $pitch", 0.0, Geo.angleDiff(h, 180.0), 1.0)
+            }
+        }
+        // In piedi verso Sud ma storto di 20° (rotazione attorno all'asse della fotocamera): resta Sud.
+        val t = Math.toRadians(20.0)
+        val crooked = matrix(
+            doubleArrayOf(-Math.cos(t), 0.0, Math.sin(t)),   // X: ovest, un po' verso l'alto
+            doubleArrayOf(Math.sin(t), 0.0, Math.cos(t)),    // Y: alto, un po' verso est
+            doubleArrayOf(0.0, 1.0, 0.0),                    // Z: nord (la fotocamera guarda a sud)
+        )
+        assertEquals(0.0, Geo.angleDiff(Projector.headingMagneticDeg(crooked), 180.0), 0.01)
+    }
+
     @Test fun rolledPhoneStillProjects() {
         // Telefono ruotato di 90° in senso antiorario (orizzontale): X telefono = alto, Y telefono = ovest.
         val landscape = floatArrayOf(0f, -1f, 0f, 0f, 0f, -1f, 1f, 0f, 0f)
