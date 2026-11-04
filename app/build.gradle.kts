@@ -14,7 +14,14 @@ android {
         // Su GitHub Actions ogni build ha un numero crescente, così il telefono accetta l'aggiornamento.
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "0.1.$build"
+        versionName = "0.2.$build"
+        // Repository da cui l'app scarica i pacchetti regione (quello che ha compilato l'APK).
+        val repo = System.getenv("GITHUB_REPOSITORY") ?: "pivaalberto-ai/cime"
+        buildConfigField("String", "PACK_REPO", "\"$repo\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {

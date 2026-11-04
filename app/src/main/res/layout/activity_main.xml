@@ -47,6 +47,26 @@
             android:tint="#FFFFFF" />
     </LinearLayout>
 
+    <!-- Cima cercata: tocca per smettere di seguirla. Il margine superiore viene impostato dal codice. -->
+    <TextView
+        android:id="@+id/targetChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="64dp"
+        android:background="#CC222222"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:maxWidth="300dp"
+        android:paddingStart="14dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="8dp"
+        android:textColor="#FFD54F"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <Button
         android:id="@+id/done"
         android:layout_width="wrap_content"

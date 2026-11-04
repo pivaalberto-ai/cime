@@ -13,9 +13,17 @@ più la linea dell'orizzonte calcolata dal modello del terreno. Funziona complet
    Si calcola anche il profilo dell'orizzonte (linea gialla), utile per verificare l'allineamento.
 4. **Dove guardi**: sensore *rotation vector* + declinazione magnetica (`GeomagneticField`) →
    ogni cima viene proiettata sullo schermo con la focale reale della fotocamera.
-5. **Calibrazione**: la bussola del telefono sbaglia spesso di qualche grado. Dal menu ⋮ → *Calibra*,
-   trascina finché la linea gialla combacia con le creste vere; pizzica per correggere lo zoom.
-   La correzione viene salvata.
+5. **Allineamento automatico**: la bussola del telefono sbaglia spesso di qualche grado. A telefono fermo,
+   circa 3 volte al secondo l'app cerca nell'immagine la linea tra cielo e montagne (`core/Horizon.kt`)
+   e la confronta con quella calcolata: se combaciano in modo inequivocabile corregge da sola direzione
+   e inclinazione (compare "✓ allineato all'orizzonte"). Con pianura, nebbia o montagne troppo piccole
+   non corregge nulla. Si può disattivare dal menu.
+6. **Calibrazione a mano**: ⋮ → *Calibra a mano*, trascina finché la linea gialla combacia con le creste
+   vere; pizzica per correggere lo zoom. La correzione viene salvata.
+7. **Cerca una cima**: ⋮ → *Cerca una cima*, per nome (accenti e maiuscole non contano). Se è inquadrata
+   viene cerchiata in giallo, altrimenti una freccia al bordo indica dove girarsi.
+8. **Pacchetti regione**: ⋮ → *Pacchetti regione* elenca quelli pubblicati tra le Release del repository
+   (serve che sia pubblico), li scarica, segnala gli aggiornamenti e permette di eliminarli.
 
 ## Struttura
 

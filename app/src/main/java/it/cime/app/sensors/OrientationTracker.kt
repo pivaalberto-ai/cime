@@ -51,9 +51,14 @@ class OrientationTracker(context: Context, private val onUpdate: () -> Unit) : S
             for (i in 0..3) q[i] /= n
         }
         val w = if (q[0] < 0) -1f else 1f
-        SensorManager.getRotationMatrixFromVector(rotation, floatArrayOf(q[1] * w, q[2] * w, q[3] * w, q[0] * w))
+        synchronized(rotation) {
+            SensorManager.getRotationMatrixFromVector(rotation, floatArrayOf(q[1] * w, q[2] * w, q[3] * w, q[0] * w))
+        }
         onUpdate()
     }
+
+    /** Copia coerente della matrice, leggibile da un altro thread (analisi dell'immagine). */
+    fun snapshot(out: FloatArray) = synchronized(rotation) { rotation.copyInto(out) }
 
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
         this.accuracy = accuracy

@@ -5,18 +5,30 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import it.cime.app.core.Calibration
 import it.cime.app.core.Geo
+import it.cime.app.core.Peak
 import it.cime.app.core.Projector
 import it.cime.app.core.ViewResult
 import it.cime.app.core.VisiblePeak
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/** Cima cercata dall'utente, con la geometria vista dalla posizione corrente. */
+data class Target(
+    val peak: Peak,
+    val azimuthDeg: Double,
+    val elevationDeg: Double,
+    val distanceM: Double,
+    /** null = non calcolato (es. oltre il raggio di calcolo). */
+    val visible: Boolean?,
+)
 
 /** Disegna orizzonte ed etichette delle cime sopra la preview della fotocamera. */
 class PeakOverlayView @JvmOverloads constructor(
@@ -39,6 +51,11 @@ class PeakOverlayView @JvmOverloads constructor(
         set(value) { field = value; invalidate() }
     var insetBottom = 0f
         set(value) { field = value; invalidate() }
+    /** Cima cercata: evidenziata se inquadrata, altrimenti indicata da una freccia al bordo. */
+    var target: Target? = null
+        set(value) { field = value; invalidate() }
+    /** Ultimo allineamento automatico riuscito (SystemClock.elapsedRealtime). */
+    var autoAlignedAt = 0L
     /** Chiamato quando l'utente modifica la calibrazione trascinando/pizzicando. */
     var onCalibrationChanged: ((Calibration) -> Unit)? = null
 
@@ -60,8 +77,29 @@ class PeakOverlayView @JvmOverloads constructor(
         color = Color.WHITE; textSize = 18 * dp; textAlign = Paint.Align.CENTER; isFakeBoldText = true
         setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
     }
+    private val autoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(120, 230, 120); textSize = 13 * dp; textAlign = Paint.Align.CENTER; isFakeBoldText = true
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val targetColor = Color.rgb(255, 213, 79)
+    private val targetRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = targetColor; strokeWidth = 3 * dp; style = Paint.Style.STROKE
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val targetFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = targetColor; setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val targetName = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = targetColor; textSize = 16 * dp; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+        setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val targetInfo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 12 * dp; textAlign = Paint.Align.CENTER
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
     private val tmp = FloatArray(2)
     private val path = Path()
+    private val arrow = Path()
 
     private var projector: Projector? = null
 
@@ -76,6 +114,7 @@ class PeakOverlayView @JvmOverloads constructor(
         val v = view ?: return
         drawSkyline(canvas, p, v)
         drawPeaks(canvas, p, v)
+        drawTarget(canvas, p)
     }
 
     private fun drawHeading(canvas: Canvas, p: Projector) {
@@ -85,7 +124,65 @@ class PeakOverlayView @JvmOverloads constructor(
         // Se una calibrazione manuale sta spostando la bussola, lo si vede subito.
         val off = calibration.headingOffsetDeg.roundToInt()
         if (off != 0) label += "  (corr. ${if (off > 0) "+" else ""}$off°)"
-        canvas.drawText(label, width / 2f, height - insetBottom - 24 * dp, hudPaint)
+        val y = height - insetBottom - 24 * dp
+        canvas.drawText(label, width / 2f, y, hudPaint)
+        if (SystemClock.elapsedRealtime() - autoAlignedAt < 5_000) {
+            canvas.drawText("✓ allineato all'orizzonte", width / 2f, y - 24 * dp, autoPaint)
+        }
+    }
+
+    private fun drawTarget(canvas: Canvas, p: Projector) {
+        val t = target ?: return
+        val left = 28 * dp; val right = width - 28 * dp
+        val top = insetTop + 40 * dp; val bottom = height - insetBottom - 90 * dp
+        val inFront = p.project(t.azimuthDeg, t.elevationDeg, tmp)
+        val km = t.distanceM / 1000
+        val dist = if (km < 10) String.format(Locale.ITALY, "%.1f km", km) else "${km.roundToInt()} km"
+        val info = "${t.peak.ele.roundToInt()} m · $dist" + if (t.visible == false) " · nascosta dai rilievi" else ""
+
+        if (inFront && tmp[0] in left..right && tmp[1] in top..bottom) {
+            // Inquadrata: cerchio e nome sopra.
+            val x = tmp[0]; val y = tmp[1]
+            canvas.drawCircle(x, y, 18 * dp, targetRing)
+            canvas.drawCircle(x, y, 3 * dp, targetFill)
+            val tx = x.coerceIn(left + 60 * dp, right - 60 * dp)
+            canvas.drawText(t.peak.name, tx, y - 30 * dp, targetName)
+            canvas.drawText(info, tx, y - 30 * dp + 16 * dp, targetInfo)
+            return
+        }
+
+        // Fuori inquadratura: freccia sul bordo nella direzione in cui girarsi.
+        val cx = width / 2f; val cy = (top + bottom) / 2
+        val turn = Geo.angleDiff(t.azimuthDeg, p.centerAzimuthDeg())
+        var dx: Float; var dy: Float
+        if (inFront) { dx = tmp[0] - cx; dy = tmp[1] - cy } else { dx = if (turn >= 0) 1f else -1f; dy = 0f }
+        val len = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat().takeIf { it > 1e-3f } ?: 1f
+        dx /= len; dy /= len
+        var s = Float.MAX_VALUE
+        if (dx > 1e-3f) s = minOf(s, (right - cx) / dx)
+        if (dx < -1e-3f) s = minOf(s, (left - cx) / dx)
+        if (dy > 1e-3f) s = minOf(s, (bottom - cy) / dy)
+        if (dy < -1e-3f) s = minOf(s, (top - cy) / dy)
+        val ex = cx + dx * s; val ey = cy + dy * s
+        val px = -dy; val py = dx
+        arrow.reset()
+        arrow.moveTo(ex + dx * 16 * dp, ey + dy * 16 * dp)
+        arrow.lineTo(ex - dx * 10 * dp + px * 13 * dp, ey - dy * 10 * dp + py * 13 * dp)
+        arrow.lineTo(ex - dx * 10 * dp - px * 13 * dp, ey - dy * 10 * dp - py * 13 * dp)
+        arrow.close()
+        canvas.drawPath(arrow, targetFill)
+
+        val hint = when {
+            abs(turn) > 15 -> "gira a ${if (turn > 0) "destra" else "sinistra"} di ${abs(turn).roundToInt()}°"
+            dy < -0.5f -> "alza il telefono"
+            dy > 0.5f -> "abbassa il telefono"
+            else -> "gira a ${if (turn > 0) "destra" else "sinistra"}"
+        }
+        val lx = (ex - dx * 70 * dp).coerceIn(left + 70 * dp, right - 70 * dp)
+        val ly = (ey - dy * 50 * dp).coerceIn(top + 16 * dp, bottom)
+        canvas.drawText(t.peak.name, lx, ly, targetName)
+        canvas.drawText(hint, lx, ly + 17 * dp, targetInfo)
+        canvas.drawText(info, lx, ly + 32 * dp, targetInfo)
     }
 
     private fun drawSkyline(canvas: Canvas, p: Projector, v: ViewResult) {
@@ -105,8 +202,9 @@ class PeakOverlayView @JvmOverloads constructor(
     private fun drawPeaks(canvas: Canvas, p: Projector, v: ViewResult) {
         val margin = 40 * dp
         // Priorità: cime visibili, poi più alte e più vicine.
+        val targetId = target?.peak?.id
         val candidates = v.peaks
-            .filter { it.visible || showHidden }
+            .filter { (it.visible || showHidden) && it.peak.id != targetId }
             .mapNotNull { vp ->
                 if (!p.project(vp.azimuthDeg, vp.elevationDeg, tmp)) return@mapNotNull null
                 if (tmp[0] < -margin || tmp[0] > width + margin || tmp[1] < 0 || tmp[1] > height) return@mapNotNull null

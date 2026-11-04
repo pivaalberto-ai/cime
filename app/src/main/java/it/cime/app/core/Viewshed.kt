@@ -24,6 +24,8 @@ class ViewResult(
     /** Elevazione dell'orizzonte (gradi) per ogni azimut, passo [skylineStepDeg]. */
     val skyline: FloatArray,
     val skylineStepDeg: Double,
+    /** Distanza (m) del punto di terreno che forma l'orizzonte in ogni direzione. */
+    val skylineDistM: FloatArray = FloatArray(skyline.size) { Float.MAX_VALUE },
 )
 
 /**
@@ -36,7 +38,7 @@ class Viewshed(
     private val eyeHeightM: Double = 1.7,
     /** Tolleranza: il DEM a ~90 m smussa creste e cime, quindi concediamo un margine. */
     private val toleranceDeg: Double = 0.08,
-    private val skylineStepDeg: Double = 0.5,
+    private val skylineStepDeg: Double = 0.25,
 ) {
     fun compute(lat: Double, lon: Double, peaks: List<Peak>, altitudeOverride: Double? = null): ViewResult? {
         val ground = dem.elevationAt(lat, lon)
@@ -57,10 +59,13 @@ class Viewshed(
         }.filter { it != null }.map { it!! }.collect(Collectors.toList())
         val n = (360.0 / skylineStepDeg).toInt()
         val sky = FloatArray(n)
+        val dist = FloatArray(n)
         IntStream.range(0, n).parallel().forEach { i ->
-            sky[i] = Math.toDegrees(horizonAngle(lat, lon, i * skylineStepDeg, eye)).toFloat()
+            val (a, d) = horizonAngle(lat, lon, i * skylineStepDeg, eye)
+            sky[i] = Math.toDegrees(a).toFloat()
+            dist[i] = d.toFloat()
         }
-        return ViewResult(lat, lon, eye, result, sky, skylineStepDeg)
+        return ViewResult(lat, lon, eye, result, sky, skylineStepDeg, dist)
     }
 
     /**
@@ -84,22 +89,24 @@ class Viewshed(
     }
 
     /** Elevazione dell'orizzonte in una direzione: il passo cresce con la distanza per contenere i calcoli. */
-    private fun horizonAngle(lat: Double, lon: Double, az: Double, eye: Double): Double {
+    /** Angolo dell'orizzonte (radianti) e distanza del punto che lo forma. */
+    private fun horizonAngle(lat: Double, lon: Double, az: Double, eye: Double): Pair<Double, Double> {
         val (lat1, lon1) = Geo.destination(lat, lon, az, maxDistanceM)
         val path = GreatCircle(lat, lon, lat1, lon1)
         val base = max(dem.cellMeters * 0.75, 25.0)
         var best = -Math.PI / 2
+        var bestDist = maxDistanceM
         var s = 50.0
         while (s < maxDistanceM) {
             path.at(s / maxDistanceM)
             val h = dem.elevationAt(path.lat, path.lon)
             if (!h.isNaN()) {
                 val a = Geo.elevationAngle(eye, h, s)
-                if (a > best) best = a
+                if (a > best) { best = a; bestDist = s }
             }
             s += max(base, min(s * 0.004, 400.0))
         }
-        return best
+        return best to bestDist
     }
 }
 
